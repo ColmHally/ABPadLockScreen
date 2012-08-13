@@ -73,25 +73,30 @@
 -(void)showLockScreen:(id)sender
 {
     //Create the ABLockScreen (Alloc init) and display how you wish. An easy way is by using it as a modal view as per below:
-    ABPadLockScreen *lockScreen = [[ABPadLockScreen alloc] initWithDelegate:self withDataSource:self];
+    ABPadLockScreen *lockScreen = [[ABPadLockScreen alloc] initWithMode:[ABPadLockScreen pinModeUnlock] withDelegate:self withDataSource:self];
+    
     float centerLeft = self.view.frame.size.width/2.0f - lockScreen.view.frame.size.width/2.0f;
     float centerTop =  self.view.frame.size.height/2.0f - lockScreen.view.frame.size.height/2.0f;
+    
     [lockScreen setModalPresentationStyle:UIModalPresentationFormSheet];
     [lockScreen setModalTransitionStyle:UIModalTransitionStyleCoverVertical];
+    
     [self presentModalViewController:lockScreen animated:YES];
     lockScreen.view.superview.frame = CGRectMake(centerLeft, centerTop, 332.0f, 465.0f);
+    
     [lockScreen release];
 }
 
 #pragma mark - ABPadLockScreen Delegate methods
-- (void)unlockWasSuccessful
+- (void)pinEntryWasSuccessful:(int)pin
 {
     //Perform any action needed when the unlock was successfull (usually remove the lock view and then load another view)
+    NSLog(@"Pin entered: %d",pin);
     [self dismissModalViewControllerAnimated:YES];
     
 }
 
-- (void)unlockWasUnsuccessful:(int)falseEntryCode afterAttemptNumber:(int)attemptNumber
+- (void)pinEntryWasUnsuccessful:(int)falseEntryCode afterAttemptNumber:(int)attemptNumber
 {
     //Tells you that the user performed an unsuccessfull unlock and tells you the incorrect code and the attempt number. ABLockScreen will display an error if you have
     //set an attempt limit through the datasource method, but you may wish to make a record of the failed attempt.
@@ -99,7 +104,7 @@
     
 }
 
-- (void)unlockWasCancelled
+- (void)pinEntryWasCancelled
 {
     //This is a good place to remove the ABLockScreen
     [self dismissModalViewControllerAnimated:YES];
@@ -114,20 +119,20 @@
 }
 
 #pragma mark - ABPadLockScreen DataSource methods
-- (int)unlockPasscode
-{
+- (BOOL)checkPin:(int)pin
+{    
     //Provide the ABLockScreen with a code to verify against
-    return 1234;
+    return [@"1234" hash] == [[NSString stringWithFormat:@"%d",pin] hash];
 }
 
-- (NSString *)padLockScreenTitleText
+- (NSString *)padLockScreenTitleText:(int)mode attemptNumber:(int)attempts
 {
     //Provide the text for the lock screen title here
     return @"Enter passcode";
     
 }
 
-- (NSString *)padLockScreenSubtitleText
+- (NSString *)padLockScreenSubtitleText:(int)mode attemptNumber:(int)attempts
 {
     //Provide the text for the lock screen subtitle here
     return @"Please enter passcode";

@@ -29,33 +29,41 @@
 //
 
 #import <UIKit/UIKit.h>
+#import <CoreGraphics/CoreGraphics.h>
+
 @protocol ABPadLockScreenDelegate
 @required
-- (void)unlockWasSuccessful;
-- (void)unlockWasUnsuccessful:(int)falseEntryCode afterAttemptNumber:(int)attemptNumber;
-- (void)unlockWasCancelled;
+- (void)pinEntryWasSuccessful:(int)pin;
+- (void)pinEntryWasCancelled;
 
 @optional
 - (void)attemptsExpired;
+- (void)pinEntryWasUnsuccessful:(int)falseEntryCode afterAttemptNumber:(int)attemptNumber;
+- (void)pinSetWasUnsuccessful:(int)pinOne pinTwo:(int)pinTwo;
+
 @end
 
 @protocol ABPadLockScreenDataSource
 @required
-- (int)unlockPasscode;
-- (NSString *)padLockScreenTitleText;
-- (NSString *)padLockScreenSubtitleText;
-- (BOOL)hasAttemptLimit;
+- (NSString *)padLockScreenTitleText:(int)mode attemptNumber:(int)attempts;
+- (NSString *)padLockScreenSubtitleText:(int)mode attemptNumber:(int)attempts;
 
 @optional
+- (BOOL)checkPin:(int)pin;
 - (int)attemptLimit;
+- (BOOL)hasAttemptLimit;
 
 @end
 
 @interface ABPadLockScreen : UIViewController
 @property (nonatomic, assign) id<ABPadLockScreenDelegate> delegate;
 @property (nonatomic, assign) id<ABPadLockScreenDataSource> dataSource;
+@property int pinMode;
 
-- (id)initWithDelegate:(id<ABPadLockScreenDelegate>)aDelegate withDataSource:(id<ABPadLockScreenDataSource>)aDataSource;
++ (int)pinModeSet;
++ (int)pinModeUnlock;
+
+- (id)initWithMode:(int)mode withDelegate:(id<ABPadLockScreenDelegate>)aDelegate withDataSource:(id<ABPadLockScreenDataSource>)aDataSource;
 - (void)resetAttempts;
 - (void)resetLockScreen;
 

@@ -28,6 +28,10 @@
 //  3. This notice may not be removed or altered from any source distribution.
 //
 #import "ABPadLockScreen.h"
+
+static const int pinModeSet = 0;
+static const int pinModeUnlock = 1;
+
 @interface ABPadLockScreen()
 @property (nonatomic, retain) UIImageView *keyValueOneImageView;
 @property (nonatomic, retain) UIImageView *keyValueTwoImageView;
@@ -36,21 +40,24 @@
 @property (nonatomic, retain) UIImageView *incorrectAttemptImageView;
 
 @property (nonatomic, retain) UILabel *incorrectAttemptLabel;
-@property (nonatomic, retain) UILabel *subTitleLabel;
+@property (nonatomic, retain) NSArray *titleLabels;
+@property (nonatomic, retain) NSArray *subTitleLabels;
 
 @property (nonatomic) int digitsPressed;
-@property(nonatomic) int attempts;
+@property (nonatomic) int attempts;
+@property (nonatomic) int prevPasscode;
 
 @property (nonatomic, retain) NSString *digitOne;
 @property (nonatomic, retain) NSString *digitTwo;
 @property (nonatomic, retain) NSString *digitThree;
 @property (nonatomic, retain) NSString *digitFour;
 
+- (void)animateKeyValues;
 - (void)cancelButtonTapped:(id)sender;
 - (void)digitButtonPressed:(id)sender;
 - (void)backSpaceButtonTapped:(id)sender;
 - (void)digitInputted:(int)digit;
-- (void)checkPin;
+- (void)pinEnterred;
 - (void)lockPad;
 - (UIButton *)getStyledButtonForNumber:(int)number;
 @end
@@ -58,17 +65,27 @@
 @implementation ABPadLockScreen
 @synthesize delegate, dataSource;
 @synthesize keyValueOneImageView, keyValueTwoImageView, keyValueThreeImageView, keyValueFourImageView, incorrectAttemptImageView;
-@synthesize incorrectAttemptLabel, subTitleLabel;
+@synthesize incorrectAttemptLabel, subTitleLabels, titleLabels;
 @synthesize digitOne, digitTwo, digitThree, digitFour;
-@synthesize digitsPressed, attempts;
+@synthesize digitsPressed, attempts, prevPasscode;
+@synthesize pinMode;
 
-- (id)initWithDelegate:(id<ABPadLockScreenDelegate>)aDelegate withDataSource:(id<ABPadLockScreenDataSource>)aDataSource
++ (int)pinModeSet {
+    return pinModeSet;
+}
+
++ (int)pinModeUnlock {
+    return pinModeUnlock;
+}
+
+- (id)initWithMode:(int)mode withDelegate:(id<ABPadLockScreenDelegate>)aDelegate withDataSource:(id<ABPadLockScreenDataSource>)aDataSource
 {
     self = [super init];
-    if (self) 
+    if (self)
     {
         [self setDelegate:aDelegate];
         [self setDataSource:aDataSource];
+        [self setPinMode:mode];
     }
     return self;
 }
@@ -93,16 +110,54 @@
     UIImageView *backgroundView = [[[UIImageView alloc] initWithImage:[UIImage imageNamed:@"background"]] autorelease];
     [self.view addSubview:backgroundView];
     
-    //Set the title
-    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20.0f, 10.0f, self.view.frame.size.width - 40.0f, 20.0f)];
-    [titleLabel setTextAlignment:UITextAlignmentCenter];
-    [titleLabel setBackgroundColor:[UIColor clearColor]];
-    [titleLabel setTextColor:[UIColor whiteColor]];
-    [titleLabel setFont:[UIFont fontWithName:@"Helvetica-Bold" size:18.0f]];
-    [titleLabel setText:[dataSource padLockScreenTitleText]];
-    [self.view addSubview:titleLabel];
+    // when we're setting a passcode, you may want two (sub)titles: 1 for initial entry, and 1 to denote 2nd entry for verification
+    int numTitles = (self.pinMode == pinModeUnlock) ? 1 : 2;
+    NSMutableArray *titles = [[NSMutableArray alloc] initWithCapacity:numTitles];
+    NSMutableArray *subTitles = [[NSMutableArray alloc] initWithCapacity:numTitles];
     
-    //Set the cancel button
+    for (int i=0; i < numTitles; i++) {
+        
+        // set the title
+        UILabel *_titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20.0f, 10.0f, self.view.frame.size.width - 40.0f, 20.0f)];
+        [_titleLabel setTextAlignment:UITextAlignmentCenter];
+        [_titleLabel setBackgroundColor:[UIColor clearColor]];
+        [_titleLabel setTextColor:[UIColor whiteColor]];
+        [_titleLabel setFont:[UIFont fontWithName:@"Helvetica-Bold" size:18.0f]];
+        
+        // requests title text for both initial and verification entry (if needed)
+        [_titleLabel setText:[dataSource padLockScreenTitleText:self.pinMode attemptNumber:(i+1)]];
+        
+        // set the subtitle label
+        UILabel *_subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20.0f, 70.0f, self.view.frame.size.width - 40.0f, 20.0f)];
+        [_subtitleLabel setTextAlignment:UITextAlignmentCenter];
+        [_subtitleLabel setFont:[UIFont fontWithName:@"Helvetica" size:14.0f]];
+        [_subtitleLabel setBackgroundColor:[UIColor clearColor]];
+        [_subtitleLabel setTextColor:[UIColor blackColor]];
+        
+        // requests subtitle text for both initial and verification entry (if needed)
+        [_subtitleLabel setText:[dataSource padLockScreenSubtitleText:self.pinMode attemptNumber:(i+1)]];
+        
+        // set up word wrap
+        [_subtitleLabel setLineBreakMode:UILineBreakModeWordWrap];
+        [_subtitleLabel setNumberOfLines:0];
+        
+        
+        if (i == 1) { // hide the second (sub)title labels, until they're needed
+            _titleLabel.hidden = YES;
+            _subtitleLabel.hidden = YES;
+        }
+        
+        [self.view addSubview:_titleLabel];
+        [self.view addSubview:_subtitleLabel];
+        
+        [titles addObject:_titleLabel];
+        [subTitles addObject:_subtitleLabel];
+    }
+    
+    [self setTitleLabels:titles];
+    [self setSubTitleLabels:subTitles];
+    
+    // set the cancel button
     UIButton *cancelButton = [UIButton buttonWithType:UIButtonTypeCustom];
     [cancelButton setBackgroundColor:[UIColor clearColor]];
     [cancelButton setFrame:CGRectMake(self.view.frame.size.width - 60.0f, 7.0f, 50.0f, 29.0f)];
@@ -110,36 +165,29 @@
     [cancelButton addTarget:self action:@selector(cancelButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:cancelButton];
     
-    //Set the subtitle label
-    UILabel *_subtitleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20.0f, 70.0f, self.view.frame.size.width - 40.0f, 20.0f)];
-    [_subtitleLabel setTextAlignment:UITextAlignmentCenter];
-    [_subtitleLabel setBackgroundColor:[UIColor clearColor]];
-    [_subtitleLabel setTextColor:[UIColor blackColor]];
-    [_subtitleLabel setFont:[UIFont fontWithName:@"Helvetica" size:14.0f]];
-    [_subtitleLabel setText:[dataSource padLockScreenSubtitleText]];
-    [self setSubTitleLabel:_subtitleLabel];
-    [self.view addSubview:subTitleLabel];
-    
-    //Set the (currently empty) key value images (dots that appear when the user presses a button)
+    // set the (currently empty) key value images (dots that appear when the user presses a button)
     UIImageView *_keyValueImageOne = [[[UIImageView alloc] initWithFrame:CGRectMake(52.0f, 133.0f, 16.0f, 16.0f)] autorelease];
     [self setKeyValueOneImageView:_keyValueImageOne];
     [self.view addSubview:keyValueOneImageView];
     
-    UIImageView *_keyValueImageTwo = [[[UIImageView alloc] initWithFrame:CGRectMake(123.0f, keyValueOneImageView.frame.origin.y, 16.0f, 16.0f)] autorelease];
+    UIImageView *_keyValueImageTwo = [[[UIImageView alloc] initWithFrame:CGRectMake(123.0f,
+                                                                                    keyValueOneImageView.frame.origin.y,
+                                                                                    16.0f,
+                                                                                    16.0f)] autorelease];
     [self setKeyValueTwoImageView:_keyValueImageTwo];
     [self.view addSubview:keyValueTwoImageView];
     
-    UIImageView *_keyValueImageThree = [[[UIImageView alloc] initWithFrame:CGRectMake(194.0f, 
-                                                                                     keyValueOneImageView.frame.origin.y, 
-                                                                                     16.0f, 
-                                                                                     16.0f)] autorelease];
+    UIImageView *_keyValueImageThree = [[[UIImageView alloc] initWithFrame:CGRectMake(194.0f,
+                                                                                      keyValueOneImageView.frame.origin.y,
+                                                                                      16.0f,
+                                                                                      16.0f)] autorelease];
     [self setKeyValueThreeImageView:_keyValueImageThree];
     [self.view addSubview:keyValueThreeImageView];
     
-    UIImageView *_keyValueImageFour = [[[UIImageView alloc] initWithFrame:CGRectMake(265.0f, 
-                                                                                    keyValueOneImageView.frame.origin.y, 
-                                                                                    16.0f, 
-                                                                                    16.0f)] autorelease];
+    UIImageView *_keyValueImageFour = [[[UIImageView alloc] initWithFrame:CGRectMake(265.0f,
+                                                                                     keyValueOneImageView.frame.origin.y,
+                                                                                     16.0f,
+                                                                                     16.0f)] autorelease];
     [self setKeyValueFourImageView:_keyValueImageFour];
     [self.view addSubview:keyValueFourImageView];
     
@@ -149,10 +197,10 @@
     [self.view addSubview:incorrectAttemptImageView];
     [_incorrectAttemptImageView release];
     
-    UILabel *_incorrectAttemptLabel = [[[UILabel alloc] initWithFrame:CGRectMake(incorrectAttemptImageView.frame.origin.x + 10.0f, 
-                                                                                incorrectAttemptImageView.frame.origin.y + 1.0f, 
-                                                                                incorrectAttemptImageView.frame.size.width - 20.0f, 
-                                                                                incorrectAttemptImageView.frame.size.height - 2.0f)] autorelease];
+    UILabel *_incorrectAttemptLabel = [[[UILabel alloc] initWithFrame:CGRectMake(incorrectAttemptImageView.frame.origin.x + 10.0f,
+                                                                                 incorrectAttemptImageView.frame.origin.y + 1.0f,
+                                                                                 incorrectAttemptImageView.frame.size.width - 20.0f,
+                                                                                 incorrectAttemptImageView.frame.size.height - 2.0f)] autorelease];
     [_incorrectAttemptLabel setFont:[UIFont fontWithName:@"Helvetica-Bold" size:12.0f]];
     [_incorrectAttemptLabel setTextAlignment:UITextAlignmentCenter];
     [_incorrectAttemptLabel setTextColor:[UIColor whiteColor]];
@@ -172,74 +220,74 @@
     [self.view addSubview:oneButton];
     
     UIButton *twoButton = [self getStyledButtonForNumber:2];
-    [twoButton setFrame:CGRectMake(oneButton.frame.origin.x + oneButton.frame.size.width, 
-                                   oneButton.frame.origin.y, 
-                                   middleButtonWidth, 
+    [twoButton setFrame:CGRectMake(oneButton.frame.origin.x + oneButton.frame.size.width,
+                                   oneButton.frame.origin.y,
+                                   middleButtonWidth,
                                    buttonHeight)];
     [self.view addSubview:twoButton];
     
     UIButton *threeButton = [self getStyledButtonForNumber:3];
-    [threeButton setFrame:CGRectMake(twoButton.frame.origin.x + twoButton.frame.size.width, 
-                                     twoButton.frame.origin.y, 
-                                     rightButtonWidth, 
+    [threeButton setFrame:CGRectMake(twoButton.frame.origin.x + twoButton.frame.size.width,
+                                     twoButton.frame.origin.y,
+                                     rightButtonWidth,
                                      buttonHeight)];
     [self.view addSubview:threeButton];
     
     UIButton *fourButton = [self getStyledButtonForNumber:4];
-    [fourButton setFrame:CGRectMake(oneButton.frame.origin.x, 
-                                    oneButton.frame.origin.y + oneButton.frame.size.height - 1, 
-                                    leftButtonWidth, 
+    [fourButton setFrame:CGRectMake(oneButton.frame.origin.x,
+                                    oneButton.frame.origin.y + oneButton.frame.size.height - 1,
+                                    leftButtonWidth,
                                     buttonHeight)];
     [self.view addSubview:fourButton];
     
     UIButton *fiveButton = [self getStyledButtonForNumber:5];
-    [fiveButton setFrame:CGRectMake(twoButton.frame.origin.x, 
-                                    fourButton.frame.origin.y, 
-                                    middleButtonWidth, 
+    [fiveButton setFrame:CGRectMake(twoButton.frame.origin.x,
+                                    fourButton.frame.origin.y,
+                                    middleButtonWidth,
                                     buttonHeight)];
     [self.view addSubview:fiveButton];
     
     UIButton *sixButton = [self getStyledButtonForNumber:6];
-    [sixButton setFrame:CGRectMake(threeButton.frame.origin.x, 
-                                   fiveButton.frame.origin.y, 
-                                   rightButtonWidth, 
+    [sixButton setFrame:CGRectMake(threeButton.frame.origin.x,
+                                   fiveButton.frame.origin.y,
+                                   rightButtonWidth,
                                    buttonHeight)];
     [self.view addSubview:sixButton];
     
     UIButton *sevenButton = [self getStyledButtonForNumber:7];
-    [sevenButton setFrame:CGRectMake(oneButton.frame.origin.x, 
-                                     fourButton.frame.origin.y + fourButton.frame.size.height - 1, 
-                                     leftButtonWidth, 
+    [sevenButton setFrame:CGRectMake(oneButton.frame.origin.x,
+                                     fourButton.frame.origin.y + fourButton.frame.size.height - 1,
+                                     leftButtonWidth,
                                      buttonHeight)];
     [self.view addSubview:sevenButton];
     
     UIButton *eightButton = [self getStyledButtonForNumber:8];
-    [eightButton setFrame:CGRectMake(twoButton.frame.origin.x, 
-                                     sevenButton.frame.origin.y, 
-                                     middleButtonWidth, 
+    [eightButton setFrame:CGRectMake(twoButton.frame.origin.x,
+                                     sevenButton.frame.origin.y,
+                                     middleButtonWidth,
                                      buttonHeight)];
     [self.view addSubview:eightButton];
     
     UIButton *nineButton = [self getStyledButtonForNumber:9];
-    [nineButton setFrame:CGRectMake(threeButton.frame.origin.x, 
-                                    sevenButton.frame.origin.y, 
-                                    rightButtonWidth, 
+    [nineButton setFrame:CGRectMake(threeButton.frame.origin.x,
+                                    sevenButton.frame.origin.y,
+                                    rightButtonWidth,
                                     buttonHeight)];
     [self.view addSubview:nineButton];
     
     UIButton *blankButton = [UIButton buttonWithType:UIButtonTypeCustom];
     [blankButton setBackgroundImage:[UIImage imageNamed:@"blank"] forState:UIControlStateNormal];
     [blankButton setBackgroundImage:[UIImage imageNamed:@"blank"] forState:UIControlStateHighlighted];
-    [blankButton setFrame:CGRectMake(sevenButton.frame.origin.x, 
-                                     sevenButton.frame.origin.y + sevenButton.frame.size.height - 1, 
-                                     leftButtonWidth, 
+    [blankButton setFrame:CGRectMake(sevenButton.frame.origin.x,
+                                     sevenButton.frame.origin.y + sevenButton.frame.size.height - 1,
+                                     leftButtonWidth,
                                      buttonHeight)];
     [self.view addSubview:blankButton];
     
     UIButton *zeroButton = [self getStyledButtonForNumber:0];
-    [zeroButton setFrame:CGRectMake(twoButton.frame.origin.x, 
-                                    blankButton.frame.origin.y, 
-                                    middleButtonWidth, 
+    [zeroButton setFrame:CGRectMake(twoButton.frame.origin.x,
+                                    blankButton.frame.origin.y,
+                                    middleButtonWidth,
                                     buttonHeight)];
     [self.view addSubview:zeroButton];
     
@@ -247,15 +295,14 @@
     [clearButton setBackgroundImage:[UIImage imageNamed:@"clear"] forState:UIControlStateNormal];
     [clearButton setBackgroundImage:[UIImage imageNamed:@"clear-selected"] forState:UIControlStateHighlighted];
     [clearButton addTarget:self action:@selector(backSpaceButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
-    [clearButton setFrame:CGRectMake(threeButton.frame.origin.x, 
-                                     zeroButton.frame.origin.y, 
-                                     rightButtonWidth, 
+    [clearButton setFrame:CGRectMake(threeButton.frame.origin.x,
+                                     zeroButton.frame.origin.y,
+                                     rightButtonWidth,
                                      buttonHeight)];
     [self.view addSubview:clearButton];
     
-    [titleLabel release];
-    [_subtitleLabel release];
-    
+    [titles release];
+    [subTitles release];
 }
 
 - (void)viewDidUnload
@@ -263,13 +310,46 @@
     [super viewDidUnload];
     // Release any retained subviews of the main view.
     self.incorrectAttemptLabel = nil;
-    self.subTitleLabel = nil;
+    self.subTitleLabels = nil;
+    self.titleLabels = nil;
 }
 
 - (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)interfaceOrientation
 {
     // Return YES for supported orientations
 	return YES;
+}
+
+- (void)animateKeyValues { // perform the transition from initial entry to verification
+    NSArray *keys = [NSArray arrayWithObjects:keyValueOneImageView,keyValueTwoImageView, keyValueThreeImageView, keyValueFourImageView, nil];
+    
+    [UIView animateWithDuration:0.5 animations:^ {
+        for (UIImageView *key in keys)
+            key.alpha = 0.0; // fade out each key
+        
+        UILabel *titleCurrent = [self.titleLabels objectAtIndex:0];
+        UILabel *titleReplace = [self.titleLabels objectAtIndex:1];
+        
+        UILabel *subtitleCurrent = [self.subTitleLabels objectAtIndex:0];
+        UILabel *subtitleReplace = [self.subTitleLabels objectAtIndex:1];
+        
+        [UIView transitionWithView:self.view
+                          duration:0.5
+                           options:UIViewAnimationOptionCurveEaseIn
+                        animations:^{
+                            titleCurrent.hidden = YES;
+                            titleReplace.hidden = NO;
+                            
+                            subtitleCurrent.hidden = YES;
+                            subtitleReplace.hidden = NO;
+                        } completion:nil
+         ];
+        
+    } completion:^ (BOOL finished){
+        [self resetLockScreen];
+        for (UIImageView *key in keys)
+            key.alpha = 1.0; // ensure the digits will be visible for next entry
+    }];
 }
 
 #pragma mark - pubilic methods
@@ -296,7 +376,7 @@
 #pragma mark - button methods
 - (void)cancelButtonTapped:(id)sender
 {
-    [delegate unlockWasCancelled];
+    [delegate pinEntryWasCancelled];
     [self resetLockScreen];
     [incorrectAttemptImageView setImage:nil];
     [incorrectAttemptLabel setText:nil];
@@ -305,7 +385,7 @@
 
 - (void)backSpaceButtonTapped:(id)sender
 {
-    switch (digitsPressed) 
+    switch (digitsPressed)
     {
         case 0:
             break;
@@ -343,7 +423,7 @@
 
 - (void)digitInputted:(int)digit
 {
-    switch (digitsPressed) 
+    switch (digitsPressed)
     {
         case 0:
             digitsPressed = 1;
@@ -367,7 +447,7 @@
             digitsPressed = 4;
             [keyValueFourImageView setImage:[UIImage imageNamed:@"input"]];
             [self setDigitFour:[NSString stringWithFormat:@"%i", digit]];
-            [self performSelector:@selector(checkPin) withObject:self afterDelay:0.3];
+            [self performSelector:@selector(pinEnterred) withObject:self afterDelay:0.3];
             
             break;
             
@@ -376,43 +456,59 @@
     }
 }
 
-- (void)checkPin
+- (void)pinEnterred
 {
     int stringPasscode = [[NSString stringWithFormat:@"%@%@%@%@", digitOne, digitTwo, digitThree, digitFour] intValue];
-    if (stringPasscode == [dataSource unlockPasscode]) 
+    
+    if (self.pinMode == pinModeSet) {
+        if (attempts == 0) { // store passcode entered and transition to next entry
+            prevPasscode = stringPasscode;
+            [self animateKeyValues];
+            attempts++;
+            
+        } else {
+            if (prevPasscode == stringPasscode) [delegate pinEntryWasSuccessful:stringPasscode]; // alert delegate of successful pin set
+            else
+                [delegate pinSetWasUnsuccessful:prevPasscode pinTwo:stringPasscode]; // alert delegate of unsuccessful pin set
+        }
+        return;
+    }
+    
+    if ([dataSource checkPin:stringPasscode]) // ask datasource to validate entered pin
     {
-        [delegate unlockWasSuccessful];
+        [delegate pinEntryWasSuccessful:stringPasscode]; // alert delegate of successful pin unlock
         [self resetLockScreen];
         [incorrectAttemptImageView setImage:nil];
         [incorrectAttemptLabel setText:nil];
     }
-    else
+    else // pin entry was unsuccessful, so determine whether to lock up or go for another attempt
     {
         attempts += 1;
-        [delegate unlockWasUnsuccessful:stringPasscode afterAttemptNumber:attempts];
-        if ([dataSource hasAttemptLimit]) 
+        [delegate pinEntryWasUnsuccessful:stringPasscode afterAttemptNumber:attempts]; // alert delegate of unsuccessful attempt
+        
+        [incorrectAttemptImageView setImage:[UIImage imageNamed:@"error-box"]];
+        
+        if ([dataSource hasAttemptLimit])
         {
             
             int remainingAttempts = [dataSource attemptLimit] - attempts;
-            if (remainingAttempts != 0) 
-            {
-                [incorrectAttemptImageView setImage:[UIImage imageNamed:@"error-box"]];
-                [incorrectAttemptLabel setText:[NSString stringWithFormat:@"Incorrect pin. %i attempts left", [dataSource attemptLimit] - attempts]];
-            }
+            
+            if (remainingAttempts != 0)
+                [incorrectAttemptLabel setText:[NSString stringWithFormat:@"Incorrect pin. %i attempts left", remainingAttempts]];
+            
             else
             {
-                [incorrectAttemptImageView setImage:[UIImage imageNamed:@"error-box"]];
-                [incorrectAttemptLabel setText:[NSString stringWithFormat:@"No remaining attempts", [dataSource attemptLimit] - attempts]];
-                [self lockPad];
+                [incorrectAttemptLabel setText:@"No remaining attempts"];
+                
+                [self lockPad]; // no more attempts allowed
                 [delegate attemptsExpired];
+                
                 return;
             }
         }
         else
-        {
-            [incorrectAttemptImageView setImage:[UIImage imageNamed:@"error-box"]];
             [incorrectAttemptLabel setText:[NSString stringWithFormat:@"Incorrect pin"]];
-        }
+        
         [self resetLockScreen];
     }
     
@@ -421,7 +517,7 @@
 - (void)lockPad
 {
     UIView *lockView = [[[UIView alloc] initWithFrame:CGRectMake(0.0f, 238.0f, self.view.frame.size.width, self.view.frame.size.height - 238.0f)] autorelease];
-    [subTitleLabel setText:nil];
+    [[subTitleLabels objectAtIndex:0] setText:nil];
     [lockView setBackgroundColor:[UIColor blackColor]];
     [lockView setAlpha:0.5];
     [self.view addSubview:lockView];
@@ -440,4 +536,5 @@
     return button;
     
 }
+
 @end
